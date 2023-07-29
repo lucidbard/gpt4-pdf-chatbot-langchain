@@ -12,6 +12,7 @@ import { TextLoader } from "langchain/document_loaders/fs/text";
 import { CSVLoader } from "langchain/document_loaders/fs/csv";
 import { DocxLoader } from "langchain/document_loaders/fs/docx";
 import { UnstructuredLoader } from "langchain/document_loaders/fs/unstructured";
+import { ChromaClient } from 'chromadb/dist/main/ChromaClient'
 
 /* Name of directory to retrieve your files from */
 const filePath = 'docs';
@@ -19,7 +20,7 @@ const filePath = 'docs';
 export const run = async () => {
   try {
     const directoryLoader = new DirectoryLoader(filePath, {
-      '.pdf': (path) => new PDFLoader(path),
+      '.pdf': (path) => new PDFLoader(path, {splitPages:true}),
       '.docx': (path) => new DocxLoader(path),
       '.json': (path) => new JSONLoader(path, "/texts"),
       '.jsonl': (path) => new JSONLinesLoader(path, "/html"),
@@ -34,18 +35,32 @@ export const run = async () => {
     const rawDocs = await directoryLoader.load();
 
     const textSplitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 1000,
-      chunkOverlap: 200,
+      chunkSize: 2048,
+      chunkOverlap: 200
     });
 
-    const docs = await textSplitter.splitDocuments(rawDocs);
+    const docs = await textSplitter.splitDocuments(rawDocs, {
+      appendChunkOverlapHeader: true,
+      chunkHeader: `DOCUMENT NAME: AI for Low-Code AI`,
+    });
+    // const docs = rawDocs//await textSplitter.splitDocuments(rawDocs);
+
+    const chromaDB = new ChromaClient({ path: "http://localhost:8000" })
+    await chromaDB.deleteCollection({ name: process.env.COLLECTION_NAME ?? "" })
+    console.log("Deleted")
 
     console.log('creating vector store...');
 
     //const embedder = new OpenAIEmbeddings({ maxConcurrency: 1 });
-    const embedder = new OpenAIEmbeddings();
-
-    await Chroma.fromDocuments(docs, embedder, {
+    const embedder = new OpenAIEmbeddings({ openAIApiKey: process.env.OPENAI_API_KEY ?? ''});
+    let transDocs = docs.map((doc) => {
+      return {
+        ...doc,
+        pageContent: doc.pageContent.replaceAll("\n", " ")
+      }
+    })
+    // await Chroma.deleteCollection({ name: process.env.COLLECTION_NAME });
+    await Chroma.fromDocuments(transDocs, embedder, {
       collectionName: process.env.COLLECTION_NAME,
     });
   } catch (error) {
